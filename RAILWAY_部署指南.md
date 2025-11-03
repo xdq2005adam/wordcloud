@@ -131,6 +131,22 @@ Railway 会自动设置 `process.env.PORT`，无需手动配置。
 
 ## 📝 常见问题
 
+### ⚠️ **重要：Railway 加载不出 GitHub 仓库？**
+
+**这是最常见的问题！** 快速解决方法：
+
+1. **Railway 右上角头像** → **"Account Settings"**
+2. 找到 **"GitHub"** 部分
+3. 点击 **"Reconnect"** 或 **"Manage"**
+4. 在 GitHub 授权页面，**确保选择了仓库访问权限**
+5. 选择 **"Only select repositories"** → 选择 `wordcloud` 仓库
+6. 点击 **"Install"** 完成授权
+7. 返回 Railway 重试
+
+**详细故障排除指南**：查看 [RAILWAY_故障排除.md](./RAILWAY_故障排除.md) 📖
+
+---
+
 ### ❌ 问题 1：部署失败
 
 **症状**：部署状态显示 "Failed"

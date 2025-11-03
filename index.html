@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实时词云展示</title>
-    <script src="/lib/qrcode.min.js"></script>
     <script src="/lib/wordcloud2.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <style>
@@ -79,10 +78,11 @@
             transform: translateY(0);
         }
 
-        #qrcode {
-            display: flex;
-            justify-content: center;
-            align-items: center;
+        #qrcode-image {
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+            height: auto;
         }
 
 
@@ -167,7 +167,7 @@
         <div class="left-panel">
             <h1>📱 扫描二维码发送消息</h1>
             <div class="qrcode-container">
-                <div id="qrcode"></div>
+                <img src="/qr_code.png" alt="扫描二维码发送消息" id="qrcode-image" style="width: 250px; height: 250px; display: block; margin: 0 auto;">
             </div>
             <button class="reset-button" id="resetBtn">🔄 重置词云</button>
         </div>
@@ -186,60 +186,8 @@
     <script>
         // 等待DOM和所有资源加载完成
         document.addEventListener('DOMContentLoaded', function() {
-            // 获取当前页面的URL用于生成二维码
-            const inputPageUrl = window.location.origin + '/input.html';
-            
-            // 生成二维码（如果QRCode库已加载）
-            function generateQRCode() {
-                const qrContainer = document.getElementById('qrcode');
-                
-                // 优先使用本地QRCode库
-                if (typeof QRCode !== 'undefined') {
-                    try {
-                        QRCode.toCanvas(qrContainer, inputPageUrl, {
-                            width: 250,
-                            margin: 2,
-                            color: {
-                                dark: '#000000',
-                                light: '#FFFFFF'
-                            }
-                        }, function (error) {
-                            if (error) {
-                                console.error('二维码生成错误:', error);
-                                useGoogleQRCode(); // 备用方案
-                            } else {
-                                console.log('✓ 二维码生成成功（使用本地库）');
-                            }
-                        });
-                        return;
-                    } catch (error) {
-                        console.error('二维码生成异常:', error);
-                        useGoogleQRCode(); // 备用方案
-                        return;
-                    }
-                }
-                
-                // 备用方案：使用Google Charts API
-                console.warn('⚠ QRCode库未加载，使用Google Charts API作为备用方案');
-                useGoogleQRCode();
-            }
-            
-            // 使用Google Charts API生成二维码（备用方案）
-            function useGoogleQRCode() {
-                const qrContainer = document.getElementById('qrcode');
-                const img = document.createElement('img');
-                const encodedUrl = encodeURIComponent(inputPageUrl);
-                img.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodedUrl}`;
-                img.alt = '二维码';
-                img.style.display = 'block';
-                img.style.margin = '0 auto';
-                qrContainer.innerHTML = '';
-                qrContainer.appendChild(img);
-                console.log('✓ 二维码生成成功（使用在线API）');
-            }
-            
-            // 尝试生成二维码（延迟一下确保库已加载）
-            setTimeout(generateQRCode, 100);
+            // 二维码已使用静态图片 qr_code.png，无需动态生成
+            console.log('✓ 使用静态二维码图片: /qr_code.png');
 
             // 检查socket.io是否加载
             if (typeof io === 'undefined') {

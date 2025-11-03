@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时词云展示</title>
+    <script src="/lib/qrcode.min.js"></script>
+    <script src="/lib/wordcloud2.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+        }
+
+        .left-panel {
+            width: 350px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        .left-panel h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+            text-align: center;
+        }
+
+        .qrcode-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        .reset-button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .reset-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+        }
+
+        .reset-button:active {
+            transform: translateY(0);
+        }
+
+        #qrcode {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+
+        .right-panel {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #wordcloud-canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(76, 175, 80, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .status.offline {
+            background: rgba(244, 67, 54, 0.9);
+        }
+
+        .refresh-notice {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 152, 0, 0.95);
+            color: white;
+            padding: 30px 40px;
+            border-radius: 15px;
+            font-size: 18px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            min-width: 300px;
+        }
+
+        .refresh-notice p {
+            margin: 10px 0;
+        }
+
+        .refresh-notice .countdown {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            margin-top: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .left-panel {
+                width: 100%;
+                height: auto;
+                padding: 20px;
+            }
+
+            .right-panel {
+                height: calc(100vh - 300px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <h1>📱 扫描二维码发送消息</h1>
+            <div class="qrcode-container">
+                <div id="qrcode"></div>
+            </div>
+            <button class="reset-button" id="resetBtn">🔄 重置词云</button>
+        </div>
+        <div class="right-panel">
+            <canvas id="wordcloud-canvas"></canvas>
+        </div>
+    </div>
+    
+    <!-- 刷新提示框 -->
+    <div class="refresh-notice" id="refresh-notice" style="display: none;">
+        <p>词云空间已满，无法放置更多词</p>
+        <p>页面将在 <span class="countdown" id="countdown">3</span> 秒后自动刷新</p>
+        <p style="font-size: 14px; margin-top: 10px;">刷新后将重新布局所有词</p>
+    </div>
+
+    <script>
+        // 等待DOM和所有资源加载完成
+        document.addEventListener('DOMContentLoaded', function() {
+            // 获取当前页面的URL用于生成二维码
+            const inputPageUrl = window.location.origin + '/input.html';
+            
+            // 生成二维码（如果QRCode库已加载）
+            function generateQRCode() {
+                const qrContainer = document.getElementById('qrcode');
+                
+                // 优先使用本地QRCode库
+                if (typeof QRCode !== 'undefined') {
+                    try {
+                        QRCode.toCanvas(qrContainer, inputPageUrl, {
+                            width: 250,
+                            margin: 2,
+                            color: {
+                                dark: '#000000',
+                                light: '#FFFFFF'
+                            }
+                        }, function (error) {
+                            if (error) {
+                                console.error('二维码生成错误:', error);
+                                useGoogleQRCode(); // 备用方案
+                            } else {
+                                console.log('✓ 二维码生成成功（使用本地库）');
+                            }
+                        });
+                        return;
+                    } catch (error) {
+                        console.error('二维码生成异常:', error);
+                        useGoogleQRCode(); // 备用方案
+                        return;
+                    }
+                }
+                
+                // 备用方案：使用Google Charts API
+                console.warn('⚠ QRCode库未加载，使用Google Charts API作为备用方案');
+                useGoogleQRCode();
+            }
+            
+            // 使用Google Charts API生成二维码（备用方案）
+            function useGoogleQRCode() {
+                const qrContainer = document.getElementById('qrcode');
+                const img = document.createElement('img');
+                const encodedUrl = encodeURIComponent(inputPageUrl);
+                img.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodedUrl}`;
+                img.alt = '二维码';
+                img.style.display = 'block';
+                img.style.margin = '0 auto';
+                qrContainer.innerHTML = '';
+                qrContainer.appendChild(img);
+                console.log('✓ 二维码生成成功（使用在线API）');
+            }
+            
+            // 尝试生成二维码（延迟一下确保库已加载）
+            setTimeout(generateQRCode, 100);
+
+            // 检查socket.io是否加载
+            if (typeof io === 'undefined') {
+                console.error('❌ socket.io未加载！请检查网络连接或服务器是否运行');
+                alert('socket.io库未加载，请刷新页面重试');
+            } else {
+                console.log('✓ socket.io已加载');
+            }
+
+            // 检查WordCloud2是否加载
+            function checkWordCloud() {
+                if (typeof WordCloud === 'undefined') {
+                    console.warn('⚠ WordCloud2库未加载，正在重试...');
+                    return false;
+                } else {
+                    console.log('✓ WordCloud2库已加载');
+                    return true;
+                }
+            }
+            
+            // 延迟检查，确保库已加载
+            setTimeout(() => {
+                if (!checkWordCloud()) {
+                    console.error('❌ WordCloud2库加载失败！');
+                    console.log('提示：请确保 /lib/wordcloud2.js 文件存在');
+                    // 尝试使用备用CDN作为最后手段
+                    const script = document.createElement('script');
+                    script.src = 'https://unpkg.com/wordcloud@1.2.2/build/wordcloud2.min.js';
+                    script.onload = () => {
+                        console.log('✓ WordCloud2库从备用CDN加载成功');
+                        if (checkWordCloud() && typeof wordCount !== 'undefined' && Object.keys(wordCount).length > 0) {
+                            updateWordCloud(); // 如果已有数据，立即更新词云
+                        }
+                    };
+                    script.onerror = () => {
+                        console.error('❌ 备用CDN也加载失败');
+                    };
+                    document.head.appendChild(script);
+                }
+            }, 500);
+
+            // 连接WebSocket
+            console.log('正在连接WebSocket服务器...');
+            const socket = io();
+
+            socket.on('connect', () => {
+                console.log('✓ WebSocket连接成功！Socket ID:', socket.id);
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('❌ WebSocket连接失败:', error);
+            });
+
+            socket.on('disconnect', (reason) => {
+                console.warn('⚠ WebSocket断开连接:', reason);
+            });
+
+            // 存储词频统计
+            const wordCount = {};
+
+            // 接收新消息
+            console.log('注册newMessage事件监听器...');
+            socket.on('newMessage', (data) => {
+                console.log('========== 收到新消息 ==========');
+                console.log('完整数据:', JSON.stringify(data, null, 2));
+                console.log('消息文本:', data.text);
+                const text = data.text?.trim();
+                if (!text) {
+                    console.log('消息为空，跳过');
+                    return;
+                }
+
+                // 简单分词（中文按字符，英文按单词）
+                // 先按标点符号分割，然后过滤空字符串
+                const words = text.split(/[\s,，。！？、；：\n\r]+/).filter(w => w.length > 0);
+                
+                console.log('分词结果:', words);
+                
+                words.forEach(word => {
+                    if (wordCount[word]) {
+                        wordCount[word] += 1;
+                    } else {
+                        wordCount[word] = 1;
+                    }
+                });
+
+                console.log('当前词频统计:', wordCount);
+
+                // 更新词云数据
+                updateWordCloud();
+            });
+
+            // 为每个词存储固定的颜色和大小权重（确保增量添加时保持一致）
+            const wordProperties = {}; // {word: {color, weight}}
+            
+            // 记录已放置的词的信息（用于增量添加）
+            const placedWords = []; // [{word, fontSize, color, x, y, width, height}]
+            
+            // 已使用的颜色列表（用于避免相似颜色）
+            const usedColors = []; // 存储HSL格式的颜色
+            
+            // 颜色工具函数
+            const colorUtils = {
+                // 将十六进制颜色转换为RGB
+                hexToRgb(hex) {
+                    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                    return result ? {
+                        r: parseInt(result[1], 16),
+                        g: parseInt(result[2], 16),
+                        b: parseInt(result[3], 16)
+                    } : null;
+                },
+                
+                // 将RGB转换为HSL
+                rgbToHsl(r, g, b) {
+                    r /= 255;
+                    g /= 255;
+                    b /= 255;
+                    const max = Math.max(r, g, b);
+                    const min = Math.min(r, g, b);
+                    let h, s, l = (max + min) / 2;
+                    
+                    if (max === min) {
+                        h = s = 0; // 无色彩
+                    } else {
+                        const d = max - min;
+                        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                        switch (max) {
+                            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                            case g: h = ((b - r) / d + 2) / 6; break;
+                            case b: h = ((r - g) / d + 4) / 6; break;
+                        }
+                    }
+                    return { h: h * 360, s: s * 100, l: l * 100 };
+                },
+                
+                // 将HSL转换为RGB
+                hslToRgb(h, s, l) {
+                    h /= 360;
+                    s /= 100;
+                    l /= 100;
+                    let r, g, b;
+                    
+                    if (s === 0) {
+                        r = g = b = l; // 无色彩
+                    } else {
+                        const hue2rgb = (p, q, t) => {
+                            if (t < 0) t += 1;
+                            if (t > 1) t -= 1;
+                            if (t < 1/6) return p + (q - p) * 6 * t;
+                            if (t < 1/2) return q;
+                            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                            return p;
+                        };
+                        
+                        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                        const p = 2 * l - q;
+                        r = hue2rgb(p, q, h + 1/3);
+                        g = hue2rgb(p, q, h);
+                        b = hue2rgb(p, q, h - 1/3);
+                    }
+                    
+                    return {
+                        r: Math.round(r * 255),
+                        g: Math.round(g * 255),
+                        b: Math.round(b * 255)
+                    };
+                },
+                
+                // 将RGB转换为十六进制
+                rgbToHex(r, g, b) {
+                    return '#' + [r, g, b].map(x => {
+                        const hex = x.toString(16);
+                        return hex.length === 1 ? '0' + hex : hex;
+                    }).join('');
+                },
+                
+                // 计算两个HSL颜色的差异
+                colorDifference(hsl1, hsl2) {
+                    // 色相差（考虑色环的循环特性）
+                    let hDiff = Math.abs(hsl1.h - hsl2.h);
+                    if (hDiff > 180) hDiff = 360 - hDiff;
+                    
+                    // 饱和度和亮度差
+                    const sDiff = Math.abs(hsl1.s - hsl2.s);
+                    const lDiff = Math.abs(hsl1.l - hsl2.l);
+                    
+                    // 综合差异（色相权重更高）
+                    return hDiff * 2 + sDiff * 0.5 + lDiff * 0.5;
+                },
+                
+                // 检查颜色是否与已有颜色差异足够大
+                isColorDifferent(newHsl, minDifference = 40) {
+                    for (const usedHsl of usedColors) {
+                        const diff = this.colorDifference(newHsl, usedHsl);
+                        if (diff < minDifference) {
+                            return false;
+                        }
+                    }
+                    return true;
+                },
+                
+                // 生成一个与已有颜色差异足够大的新颜色
+                generateDifferentColor(baseHue, attempts = 50) {
+                    // 尝试不同的色相、饱和度和亮度组合
+                    for (let attempt = 0; attempt < attempts; attempt++) {
+                        // 色相：在基础色相周围分散，但避免太接近已有颜色
+                        const hue = (baseHue + attempt * 137.5) % 360; // 使用黄金角（137.5度）分散
+                        
+                        // 饱和度和亮度：在合理范围内变化，确保颜色鲜艳但不刺眼
+                        const saturation = 60 + (attempt % 3) * 15; // 60-90%
+                        const lightness = 45 + (attempt % 4) * 10; // 45-75%
+                        
+                        const newHsl = { h: hue, s: saturation, l: lightness };
+                        
+                        if (this.isColorDifferent(newHsl, 35)) {
+                            return newHsl;
+                        }
+                    }
+                    
+                    // 如果50次尝试都失败，返回一个相对差异最大的
+                    let bestHsl = null;
+                    let maxMinDiff = 0;
+                    
+                    for (let i = 0; i < 100; i++) {
+                        const hue = (baseHue + i * 137.5) % 360;
+                        const saturation = 60 + (i % 3) * 15;
+                        const lightness = 45 + (i % 4) * 10;
+                        const testHsl = { h: hue, s: saturation, l: lightness };
+                        
+                        let minDiff = Infinity;
+                        for (const usedHsl of usedColors) {
+                            const diff = this.colorDifference(testHsl, usedHsl);
+                            minDiff = Math.min(minDiff, diff);
+                        }
+                        
+                        if (minDiff > maxMinDiff) {
+                            maxMinDiff = minDiff;
+                            bestHsl = testHsl;
+                        }
+                    }
+                    
+                    return bestHsl || { h: baseHue, s: 70, l: 55 };
+                }
+            };
+            
+            // 获取所有已有词的颜色HSL列表（用于颜色差异检测）
+            function getAllUsedColorsHsl() {
+                const allHsl = [...usedColors]; // 复制已使用颜色列表
+                
+                // 将已保存的词的颜色也转换为HSL并加入列表
+                for (const word in wordProperties) {
+                    if (wordProperties[word].color) {
+                        const rgb = colorUtils.hexToRgb(wordProperties[word].color);
+                        if (rgb) {
+                            const hsl = colorUtils.rgbToHsl(rgb.r, rgb.g, rgb.b);
+                            // 检查是否已存在（避免重复）
+                            let exists = false;
+                            for (const existingHsl of allHsl) {
+                                if (colorUtils.colorDifference(hsl, existingHsl) < 10) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists) {
+                                allHsl.push(hsl);
+                            }
+                        }
+                    }
+                }
+                
+                return allHsl;
+            }
+            
+            // 生成随机颜色（基于词的哈希，确保同一词总是相同颜色，且避免相似颜色）
+            function getColorForWord(word) {
+                if (wordProperties[word] && wordProperties[word].color) {
+                    return wordProperties[word].color;
+                }
+                
+                // 基于词的哈希生成基础色相，确保同一词总是相同颜色
+                let hash = 0;
+                for (let i = 0; i < word.length; i++) {
+                    hash = word.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const baseHue = Math.abs(hash) % 360;
+                
+                // 获取所有已有颜色的HSL列表（包括已保存的词）
+                const allUsedHsl = getAllUsedColorsHsl();
+                
+                // 临时替换usedColors以便generateDifferentColor使用
+                const originalUsedColors = [...usedColors];
+                usedColors.length = 0;
+                usedColors.push(...allUsedHsl);
+                
+                // 生成与已有颜色差异足够大的新颜色
+                const newHsl = colorUtils.generateDifferentColor(baseHue);
+                
+                // 恢复usedColors并添加新颜色
+                usedColors.length = 0;
+                usedColors.push(...originalUsedColors);
+                usedColors.push(newHsl);
+                
+                // 将HSL转换为RGB再转换为十六进制
+                const rgb = colorUtils.hslToRgb(newHsl.h, newHsl.s, newHsl.l);
+                const color = colorUtils.rgbToHex(rgb.r, rgb.g, rgb.b);
+                
+                // 保存颜色
+                if (!wordProperties[word]) {
+                    wordProperties[word] = {};
+                }
+                wordProperties[word].color = color;
+                
+                return color;
+            }
+            
+            // 获取词的固定权重（基于词的哈希，确保同一词总是相同大小）
+            function getWeightForWord(word) {
+                if (wordProperties[word] && wordProperties[word].weight !== undefined) {
+                    return wordProperties[word].weight;
+                }
+                
+                // 基于词的哈希生成权重（0-1），确保同一词总是相同大小
+                let hash = 0;
+                for (let i = 0; i < word.length; i++) {
+                    hash = word.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const weight = Math.abs(hash) % 1000 / 1000; // 0-1之间的值
+                
+                // 保存权重
+                if (!wordProperties[word]) {
+                    wordProperties[word] = {};
+                }
+                wordProperties[word].weight = weight;
+                
+                return weight;
+            }
+
+            // 更新词云（增量添加模式：保留已存在的词，只添加新词）
+            function updateWordCloud() {
+                const canvas = document.getElementById('wordcloud-canvas');
+                
+                // 确保canvas有明确的像素尺寸
+                if (!canvas.width || !canvas.height) {
+                    const rect = canvas.getBoundingClientRect();
+                    canvas.width = rect.width || 800;
+                    canvas.height = rect.height || 600;
+                }
+                
+                const wordCountKeys = Object.keys(wordCount);
+                
+                if (wordCountKeys.length === 0) {
+                    // 如果没有数据，显示提示
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#999';
+                    ctx.font = '24px Microsoft YaHei';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('等待消息...', canvas.width / 2, canvas.height / 2);
+                    placedWords.length = 0; // 清空已放置的词
+                    return;
+                }
+                
+                // 检查是否有新词
+                const existingWords = new Set(placedWords.map(p => p.word));
+                const allWords = Object.keys(wordCount);
+                const newWords = allWords.filter(word => !existingWords.has(word));
+                
+                // 如果没有新词，不需要更新
+                if (newWords.length === 0 && placedWords.length > 0) {
+                    return;
+                }
+                
+                // 为每个词生成颜色映射和固定权重
+                const colorMap = {};
+                const maxSize = Math.min(canvas.width / 8, 100);
+                const minSize = Math.max(canvas.width / 40, 20);
+                
+                // 准备所有词的列表（保持固定顺序以便颜色和大小一致）
+                const list = allWords.map(word => {
+                    colorMap[word] = getColorForWord(word);
+                    return [word, getWeightForWord(word)];
+                });
+                
+                console.log('准备生成词云，新词:', newWords.length, '总词数:', allWords.length);
+                
+                // 确保canvas尺寸正确
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+                
+                // 检查WordCloud函数是否存在
+                if (typeof WordCloud === 'undefined') {
+                    console.warn('WordCloud2库未加载，等待加载...');
+                    setTimeout(() => {
+                        if (typeof WordCloud !== 'undefined') {
+                            updateWordCloud();
+                        } else {
+                            console.error('WordCloud2库仍未加载，请检查CDN链接或网络连接');
+                        }
+                    }, 1000);
+                    return;
+                }
+                
+                try {
+                    // 使用自定义布局算法实现真正的随机分布
+                    // 增量添加模式：保持已有词的位置不变，只为新词分配位置
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    // 恢复已放置词的位置信息（从上次保存的记录中）
+                    const placed = [];
+                    const existingWordsMap = new Map(); // 用于快速查找已有词
+                    
+                    // 先恢复已有词的位置信息
+                    placedWords.forEach(item => {
+                        if (item.x !== undefined && item.y !== undefined) {
+                            // 已有完整位置信息，直接恢复
+                            placed.push({
+                                word: item.word,
+                                x: item.x,
+                                y: item.y,
+                                width: item.width,
+                                height: item.height,
+                                fontSize: item.fontSize,
+                                color: item.color
+                            });
+                            existingWordsMap.set(item.word, true);
+                        }
+                    });
+                    
+                    // 先绘制所有已有词（保持原有位置）
+                    placed.forEach(item => {
+                        ctx.fillStyle = item.color;
+                        ctx.font = `${item.fontSize}px Microsoft YaHei, Arial, sans-serif`;
+                        ctx.textAlign = 'left';
+                        ctx.textBaseline = 'top';
+                        ctx.fillText(item.word, item.x, item.y);
+                    });
+                    
+                    // 找出需要添加的新词
+                    const newWordsList = list.filter(([word, weight]) => !existingWordsMap.has(word));
+                    
+                    // 按权重排序新词，大的词先放置
+                    const sortedNewWords = newWordsList.slice().sort((a, b) => b[1] - a[1]);
+                    
+                    const padding = 20; // 边距
+                    
+                    // 矩形相交检测函数
+                    function checkRectCollision(rect1, rect2) {
+                        // rect = {x, y, width, height}
+                        return !(rect1.x + rect1.width < rect2.x ||
+                                rect2.x + rect2.width < rect1.x ||
+                                rect1.y + rect1.height < rect2.y ||
+                                rect2.y + rect2.height < rect1.y);
+                    }
+                    
+                    // 尝试找到一个不碰撞的位置（支持多种搜索策略）
+                    function findPosition(word, fontSize, color, spacing, maxAttempts = 300) {
+                        ctx.font = `${fontSize}px Microsoft YaHei, Arial, sans-serif`;
+                        const metrics = ctx.measureText(word);
+                        const textWidth = metrics.width;
+                        const textHeight = fontSize;
+                        
+                        // 如果文字太大，直接返回失败
+                        if (textWidth > canvas.width - padding * 2 || textHeight > canvas.height - padding * 2) {
+                            return null;
+                        }
+                        
+                        // 策略1: 随机搜索
+                        for (let i = 0; i < Math.min(maxAttempts, 200); i++) {
+                            const x = padding + Math.random() * (canvas.width - textWidth - padding * 2);
+                            const y = padding + Math.random() * (canvas.height - textHeight - padding * 2);
+                            
+                            const currentRect = {
+                                x: x - spacing,
+                                y: y - spacing,
+                                width: textWidth + spacing * 2,
+                                height: textHeight + spacing * 2
+                            };
+                            
+                            let collision = false;
+                            for (const placedItem of placed) {
+                                const placedRect = {
+                                    x: placedItem.x - spacing,
+                                    y: placedItem.y - spacing,
+                                    width: placedItem.width + spacing * 2,
+                                    height: placedItem.height + spacing * 2
+                                };
+                                
+                                if (checkRectCollision(currentRect, placedRect)) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!collision) {
+                                return {x, y, textWidth, textHeight};
+                            }
+                        }
+                        
+                        // 策略2: 网格搜索（更系统化）
+                        const gridSize = 30;
+                        const cols = Math.floor((canvas.width - padding * 2) / gridSize);
+                        const rows = Math.floor((canvas.height - padding * 2) / gridSize);
+                        
+                        // 随机打乱网格顺序，避免总是从左上角开始
+                        const gridPositions = [];
+                        for (let row = 0; row < rows; row++) {
+                            for (let col = 0; col < cols; col++) {
+                                gridPositions.push({row, col});
+                            }
+                        }
+                        // 随机打乱
+                        for (let i = gridPositions.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [gridPositions[i], gridPositions[j]] = [gridPositions[j], gridPositions[i]];
+                        }
+                        
+                        for (const {row, col} of gridPositions) {
+                            const x = padding + col * gridSize;
+                            const y = padding + row * gridSize;
+                            
+                            // 确保在画布内
+                            if (x + textWidth > canvas.width - padding || y + textHeight > canvas.height - padding) {
+                                continue;
+                            }
+                            
+                            const currentRect = {
+                                x: x - spacing,
+                                y: y - spacing,
+                                width: textWidth + spacing * 2,
+                                height: textHeight + spacing * 2
+                            };
+                            
+                            let collision = false;
+                            for (const placedItem of placed) {
+                                const placedRect = {
+                                    x: placedItem.x - spacing,
+                                    y: placedItem.y - spacing,
+                                    width: placedItem.width + spacing * 2,
+                                    height: placedItem.height + spacing * 2
+                                };
+                                
+                                if (checkRectCollision(currentRect, placedRect)) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!collision) {
+                                return {x, y, textWidth, textHeight};
+                            }
+                        }
+                        
+                        // 策略3: 边缘搜索（尝试画布边缘）
+                        const edgePositions = [
+                            {x: padding, y: padding + Math.random() * (canvas.height - textHeight - padding * 2)},
+                            {x: canvas.width - textWidth - padding, y: padding + Math.random() * (canvas.height - textHeight - padding * 2)},
+                            {x: padding + Math.random() * (canvas.width - textWidth - padding * 2), y: padding},
+                            {x: padding + Math.random() * (canvas.width - textWidth - padding * 2), y: canvas.height - textHeight - padding}
+                        ];
+                        
+                        for (const pos of edgePositions) {
+                            if (pos.x < padding || pos.x + textWidth > canvas.width - padding ||
+                                pos.y < padding || pos.y + textHeight > canvas.height - padding) {
+                                continue;
+                            }
+                            
+                            const currentRect = {
+                                x: pos.x - spacing,
+                                y: pos.y - spacing,
+                                width: textWidth + spacing * 2,
+                                height: textHeight + spacing * 2
+                            };
+                            
+                            let collision = false;
+                            for (const placedItem of placed) {
+                                const placedRect = {
+                                    x: placedItem.x - spacing,
+                                    y: placedItem.y - spacing,
+                                    width: placedItem.width + spacing * 2,
+                                    height: placedItem.height + spacing * 2
+                                };
+                                
+                                if (checkRectCollision(currentRect, placedRect)) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!collision) {
+                                return {x: pos.x, y: pos.y, textWidth, textHeight};
+                            }
+                        }
+                        
+                        return null; // 找不到位置
+                    }
+                    
+                    // 只为新词分配位置（支持动态调整大小）
+                    let failedWords = [];
+                    
+                    sortedNewWords.forEach(([word, weight]) => {
+                        const originalFontSize = minSize + weight * (maxSize - minSize);
+                        const color = colorMap[word] || getColorForWord(word);
+                        
+                        let fontSize = originalFontSize;
+                        let found = false;
+                        let position = null;
+                        const minAllowedSize = Math.max(8, minSize * 0.5); // 最小允许字体大小
+                        
+                        // 尝试多种字体大小，从大到小
+                        while (fontSize >= minAllowedSize && !found) {
+                            // 尝试不同的间距
+                            const spacingOptions = [5, 3, 2, 1];
+                            
+                            for (const spacing of spacingOptions) {
+                                position = findPosition(word, fontSize, color, spacing);
+                                
+                                if (position) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            
+                            // 如果当前大小找不到，缩小字体重试
+                            if (!found) {
+                                fontSize = Math.max(minAllowedSize, fontSize * 0.85); // 缩小15%
+                            }
+                        }
+                        
+                        if (found && position) {
+                            // 绘制新词
+                            ctx.fillStyle = color;
+                            ctx.font = `${fontSize}px Microsoft YaHei, Arial, sans-serif`;
+                            ctx.textAlign = 'left';
+                            ctx.textBaseline = 'top';
+                            ctx.fillText(word, position.x, position.y);
+                            
+                            // 记录新放置的词（保存实际使用的字体大小）
+                            placed.push({
+                                word: word,
+                                x: position.x,
+                                y: position.y,
+                                width: position.textWidth,
+                                height: position.textHeight,
+                                fontSize: fontSize,
+                                color: color,
+                                originalWeight: weight // 保存原始权重
+                            });
+                            
+                            // 如果字体被缩小了，更新wordProperties中的权重
+                            if (fontSize < originalFontSize) {
+                                const scaleFactor = fontSize / originalFontSize;
+                                wordProperties[word] = {
+                                    ...wordProperties[word],
+                                    adjustedSize: fontSize,
+                                    originalSize: originalFontSize
+                                };
+                            }
+                        } else {
+                            // 完全放不下的词
+                            failedWords.push(word);
+                            console.warn(`无法放置词: ${word}，已尝试最小字体大小 ${minAllowedSize}px`);
+                        }
+                    });
+                    
+                    // 如果有词放不下，刷新页面
+                    if (failedWords.length > 0) {
+                        console.warn(`无法放置 ${failedWords.length} 个词，准备刷新页面重新布局:`, failedWords);
+                        
+                        // 显示刷新提示
+                        const refreshNotice = document.getElementById('refresh-notice');
+                        const countdownElement = document.getElementById('countdown');
+                        if (refreshNotice && countdownElement) {
+                            refreshNotice.style.display = 'block';
+                            
+                            let countdown = 3;
+                            countdownElement.textContent = countdown;
+                            
+                            const countdownInterval = setInterval(() => {
+                                countdown--;
+                                if (countdown > 0) {
+                                    countdownElement.textContent = countdown;
+                                } else {
+                                    clearInterval(countdownInterval);
+                                    // 清空已放置的词，让下次重新布局
+                                    placedWords.length = 0;
+                                    // 刷新页面
+                                    window.location.reload();
+                                }
+                            }, 1000);
+                        } else {
+                            // 如果找不到元素，直接刷新
+                            placedWords.length = 0;
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        }
+                        
+                        return; // 提前返回，不更新placedWords
+                    }
+                    
+                    // 更新已放置词的完整记录（包括位置信息）
+                    placedWords.length = 0;
+                    placed.forEach(item => {
+                        placedWords.push({
+                            word: item.word,
+                            color: item.color,
+                            fontSize: item.fontSize,
+                            x: item.x,
+                            y: item.y,
+                            width: item.width,
+                            height: item.height
+                        });
+                    });
+                    
+                    console.log('词云生成成功（自定义随机布局），新词:', sortedNewWords.length, '已有词:', placed.length - sortedNewWords.length);
+                } catch (error) {
+                    console.error('生成词云时出错:', error);
+                    console.error('错误详情:', error.stack);
+                }
+            }
+
+            // 页面加载完成后初始化
+            window.addEventListener('load', () => {
+                // 初始化canvas尺寸
+                const canvas = document.getElementById('wordcloud-canvas');
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width || 800;
+                canvas.height = rect.height || 600;
+                
+                // 初始化空词云
+                updateWordCloud();
+            });
+
+            // 窗口大小改变时重新绘制
+            let resizeTimer;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    const canvas = document.getElementById('wordcloud-canvas');
+                    const rect = canvas.getBoundingClientRect();
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    updateWordCloud();
+                }, 300);
+            });
+
+            // 重置按钮功能
+            const resetBtn = document.getElementById('resetBtn');
+            resetBtn.addEventListener('click', () => {
+                // 清空所有数据
+                Object.keys(wordCount).forEach(key => delete wordCount[key]);
+                placedWords.length = 0;
+                Object.keys(wordProperties).forEach(key => delete wordProperties[key]);
+                usedColors.length = 0;
+                
+                console.log('✓ 词云已重置');
+                
+                // 重新渲染空词云
+                updateWordCloud();
+            });
+        }); // DOMContentLoaded结束
+    </script>
+</body>
+</html>
+

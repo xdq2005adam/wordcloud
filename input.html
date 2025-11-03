@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>发送消息到词云</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #555;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            resize: vertical;
+            min-height: 120px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+        }
+
+        .btn-send {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-send:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn-send:active {
+            transform: translateY(0);
+        }
+
+        .btn-send:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-clear {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .btn-clear:hover {
+            background: #e0e0e0;
+        }
+
+        .status-message {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 14px;
+            display: none;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .status-message.sending {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .connection-status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💬 发送消息</h1>
+
+        <div class="input-group">
+            <label for="messageInput">输入内容：</label>
+            <textarea 
+                id="messageInput" 
+                placeholder="请输入要显示在词云中的内容"
+                maxlength="200"
+            ></textarea>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-clear" id="clearBtn">清空</button>
+            <button class="btn-send" id="sendBtn">发送</button>
+        </div>
+
+        <div class="status-message" id="statusMessage"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statusMessage = document.getElementById('statusMessage');
+
+        // 连接状态
+        socket.on('connect', () => {
+            console.log('✓ 输入页面WebSocket连接成功！Socket ID:', socket.id);
+            sendBtn.disabled = false;
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('❌ 输入页面WebSocket连接失败:', error);
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.warn('⚠ 输入页面WebSocket断开:', reason);
+            sendBtn.disabled = true;
+        });
+
+        // 发送消息
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            
+            if (!text) {
+                showStatus('请输入内容', 'error');
+                return;
+            }
+
+            if (text.length > 200) {
+                showStatus('内容过长，最多200字', 'error');
+                return;
+            }
+
+            // 显示发送中状态
+            showStatus('发送中...', 'sending');
+            sendBtn.disabled = true;
+
+            // 发送到服务器
+            console.log('========== 发送消息 ==========');
+            console.log('消息内容:', text);
+            socket.emit('sendMessage', { text: text }, (response) => {
+                console.log('服务器响应:', response);
+                if (response && response.success) {
+                    console.log('✓ 消息发送成功！');
+                    showStatus('✓ 发送成功！', 'success');
+                    messageInput.value = '';
+                    
+                    // 2秒后清除状态
+                    setTimeout(() => {
+                        hideStatus();
+                        sendBtn.disabled = false;
+                    }, 2000);
+                } else {
+                    console.error('✗ 消息发送失败:', response?.message || '未知错误');
+                    showStatus('✗ 发送失败，请重试', 'error');
+                    sendBtn.disabled = false;
+                }
+            });
+        }
+
+        // 清空输入
+        clearBtn.addEventListener('click', () => {
+            messageInput.value = '';
+            messageInput.focus();
+            hideStatus();
+        });
+
+        // 回车发送（Shift+Enter换行）
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 发送按钮点击
+        sendBtn.addEventListener('click', sendMessage);
+
+        // 显示状态消息
+        function showStatus(message, type) {
+            statusMessage.textContent = message;
+            statusMessage.className = `status-message ${type}`;
+        }
+
+        // 隐藏状态消息
+        function hideStatus() {
+            statusMessage.className = 'status-message';
+        }
+
+        // 页面加载时聚焦输入框
+        window.addEventListener('load', () => {
+            messageInput.focus();
+        });
+    </script>
+</body>
+</html>
+

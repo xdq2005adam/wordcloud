@@ -4,6 +4,3 @@ node_modules/
 *.log
 npm-debug.log*
 
-# Cloudflare Tunnel 敏感文件
-credentials.json
-config.yml

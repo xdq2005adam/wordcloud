@@ -5,17 +5,11 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-
-// 信任代理（当使用 Cloudflare 等反向代理时）
-app.set('trust proxy', true);
-
 const io = socketIo(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    },
-    // 适配 Cloudflare 代理
-    transports: ['websocket', 'polling']
+    }
 });
 
 // 静态文件服务
